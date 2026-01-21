@@ -253,7 +253,7 @@ try:
 
 
     print("Testing pushbutton LEDs...")
-    # FLASH ALL COLOURS OF PUSHBUTTON
+    # FLASH ALL COLORS OF PUSHBUTTON
     pushbutton_led_test(1.0)
     pushbutton_led_test(0.5)
 

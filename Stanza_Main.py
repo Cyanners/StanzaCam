@@ -1,9 +1,10 @@
-# StanzaCam V1.1 - Now with Claude AI Poetry!
+# StanzaCam V1.2 - 21/01/26
 
 import time
 import RPi.GPIO as GPIO
 import os
 import base64
+import threading
 os.environ["LIBCAMERA_LOG_LEVELS"] = "ERROR"  # Only show errors, not INFO
 from picamera2 import Picamera2
 from escpos.printer import Serial
@@ -12,13 +13,13 @@ import anthropic
 
 # Import configuration
 try:
-    from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, POEM_MAX_TOKENS, POEM_PROMPT
+    from config import ANTHROPIC_API_KEY, POEM_MAX_TOKENS, POEM_PROMPTS, CLAUDE_MODELS
 except ImportError:
     print("ERROR: config.py not found! Copy config.py and add your API key.")
     ANTHROPIC_API_KEY = None
-    CLAUDE_MODEL = "claude-sonnet-4-5-20250929"
     POEM_MAX_TOKENS = 300
-    POEM_PROMPT = "Write a short poem about this image."
+    POEM_PROMPTS = {1: "Write a short poem about this image."}
+    CLAUDE_MODELS = {1: "claude-haiku-4-5-20251001", 2: "claude-sonnet-4-5-20250929"}
 
 # GPIO Pin Aliases
 PB_Red = 19
@@ -43,6 +44,24 @@ ROT_2_6 = 16
 ROT_2_7 = 20
 ROT_2_8 = 21
 
+prompt_colors = {
+    1: "WHITE",   # Standard poem
+    2: "GREEN",   # Haiku
+    3: "YELLOW",  # Limerick
+    4: "MAGENTA", # Whimsical
+    5: "RED",     # Dramatic
+    6: "CYAN",    # Humorous
+    7: "BLUE",    # Zen
+    8: "WHITE"    # Pirate
+}
+
+model_colors = {
+    1: "WHITE",  # Sonnet
+    2: "GREEN",  # Haiku
+    3: "YELLOW", # Sonnet (file saving)
+    4: "MAGENTA" # Haiku (file saving)
+}
+
 
 def printer_comms_test():
     try:
@@ -57,7 +76,7 @@ def printer_comms_test():
         # Check for response
         if printer.device.in_waiting > 0:
             response = printer.device.read(printer.device.in_waiting)
-            print("Printer connected and responding!")
+            # print("Printer connected and responding!")
             return True
         else:
             print("ERROR: No response from printer!")
@@ -80,13 +99,12 @@ def print_image():
     new_height = int(new_width * aspect_ratio)
     img = img.resize((new_width, new_height), Image.LANCZOS)
 
-    printer.text("\n")
+    printer.text("IMAGE NAME HERE\n")
     # printer.image(img, center=True)  # Raster method, can cause stretching and weird buffer issues
     printer.image(img, center=True, impl="bitImageColumn")  # Column method, fixes stretching and buffer issues but has lines along image width
     printer.text("\n\n")
 
-
-def generate_poem_from_image(image_path):
+def generate_poem_from_image(image_path, prompt_text, model):
     """Send image to Claude API and get a poem back"""
     if not ANTHROPIC_API_KEY or ANTHROPIC_API_KEY == "your-api-key-here":
         print("ERROR: Valid API key not configured in config.py")
@@ -108,8 +126,10 @@ def generate_poem_from_image(image_path):
 
         # Send image to Claude with poem prompt
         print("Sending image to Claude for poem generation...")
+        print(f"Using prompt: {prompt_text}")
+        print(f"Using model: {model}")
         message = client.messages.create(
-            model=CLAUDE_MODEL,
+            model=model,
             max_tokens=POEM_MAX_TOKENS,
             messages=[
                 {
@@ -125,7 +145,7 @@ def generate_poem_from_image(image_path):
                         },
                         {
                             "type": "text",
-                            "text": POEM_PROMPT
+                            "text": prompt_text
                         }
                     ],
                 }
@@ -160,7 +180,6 @@ def generate_poem_from_image(image_path):
         print(f"ERROR: Failed to generate poem - {e}")
         return None
 
-
 def print_poem(poem_text):
     """Print poem text on thermal printer"""
     if not poem_text:
@@ -182,10 +201,7 @@ def print_poem(poem_text):
                 line = line[wrap_point:].strip()
             printer.text(line + "\n")
 
-        printer.text("\n")
-        printer.set(align='left')  # Reset alignment
-        printer.text("~ StanzaCam + Claude AI ~\n")
-        printer.text("\n\n\n")  # Feed paper
+        printer.text("\n\n")  # Feed paper
         print("Poem printed successfully!")
         return True
 
@@ -193,8 +209,7 @@ def print_poem(poem_text):
         print(f"ERROR: Failed to print poem - {e}")
         return False
 
-
-def print_image_with_poem():
+def print_image_with_poem(image_path, rot_1_pos, rot_2_pos):
     """Print the captured image followed by a Claude-generated poem"""
     # Print the image first
     img = Image.open("test.jpg")
@@ -207,8 +222,12 @@ def print_image_with_poem():
     printer.image(img, center=True, impl="bitImageColumn")
     printer.text("\n")
 
-    # Generate and print poem
-    poem = generate_poem_from_image("test.jpg")
+    # Get the selected prompt and model
+    selected_prompt = POEM_PROMPTS.get(rot_1_pos, POEM_PROMPTS[1])
+    selected_model = CLAUDE_MODELS.get(rot_2_pos, CLAUDE_MODELS[1])
+
+    # Generate and print poem with selected prompt
+    poem = generate_poem_from_image("test.jpg", selected_prompt, selected_model)
     if poem:
         print_poem(poem)
     else:
@@ -261,19 +280,19 @@ def camera_focus_loop():
     if is_focused():
         if focus_count < 10:  # Must achieve focus 10 times
             focus_count += 1
-            if focus_count == 10:
-                print("Focus achieved!")
+            # if focus_count == 10:
+            #     print("Focus achieved!")
     else:
-        if focus_count >= 10:
-            print("Lost focus!")
+        # if focus_count >= 10:
+        #     print("Lost focus!")
         focus_count = 0
 
     if focus_count >= 10:
         focused = True
-        pb_change_led("GREEN")
+        # pb_change_led("GREEN")
     else:
         focused = False
-        pb_change_led("RED")
+        # pb_change_led("RED")
 
     return focused
 
@@ -306,50 +325,91 @@ def wait_for_pushbutton_press(timeout=3.0):
 
     return False  # Timeout - button not pressed
 
-def pb_change_led(colour):
-    if colour == "RED":
+def pb_change_led(color):
+    if color == "RED":
         GPIO.output(PB_Red,   GPIO.LOW)
         GPIO.output(PB_Green, GPIO.HIGH)
         GPIO.output(PB_Blue,  GPIO.HIGH)
-    elif colour == "GREEN":
+    elif color == "GREEN":
         GPIO.output(PB_Red,   GPIO.HIGH)
         GPIO.output(PB_Green, GPIO.LOW)
         GPIO.output(PB_Blue,  GPIO.HIGH)
-    elif colour == "BLUE":
+    elif color == "BLUE":
         GPIO.output(PB_Red,   GPIO.HIGH)
         GPIO.output(PB_Green, GPIO.HIGH)
         GPIO.output(PB_Blue,  GPIO.LOW)
-    elif colour == "MAGENTA":
+    elif color == "MAGENTA":
         GPIO.output(PB_Red,   GPIO.LOW)
         GPIO.output(PB_Green, GPIO.HIGH)
         GPIO.output(PB_Blue,  GPIO.LOW)
-    elif colour == "CYAN":
+    elif color == "CYAN":
         GPIO.output(PB_Red,   GPIO.HIGH)
         GPIO.output(PB_Green, GPIO.LOW)
         GPIO.output(PB_Blue,  GPIO.LOW)
-    elif colour == "YELLOW":
+    elif color == "YELLOW":
         GPIO.output(PB_Red,   GPIO.LOW)
         GPIO.output(PB_Green, GPIO.LOW)
         GPIO.output(PB_Blue,  GPIO.HIGH)
-    elif colour == "WHITE":
+    elif color == "WHITE":
         GPIO.output(PB_Red,   GPIO.LOW)
         GPIO.output(PB_Green, GPIO.LOW)
         GPIO.output(PB_Blue,  GPIO.LOW)
-    elif colour == "OFF":
+    elif color == "OFF":
         GPIO.output(PB_Red,   GPIO.HIGH)
         GPIO.output(PB_Green, GPIO.HIGH)
         GPIO.output(PB_Blue,  GPIO.HIGH)
 
-def pb_flash_colour(col, num=3, delay=0.25):
+def pb_flash_blocking(col, num=3, delay=0.25):
     for _ in range(num):
         pb_change_led(col)
         time.sleep(delay)
         pb_change_led("OFF")
         time.sleep(delay)
 
+def pb_flash_threaded_start(col, delay=0.25):
+    """Flash LED continuously in background until stopped"""
+    global flash_thread, flash_stop_event
+
+    # Stop any existing flash
+    pb_flash_threaded_stop()
+
+    # Clear the stop event
+    flash_stop_event.clear()
+
+    # Start new flash thread
+    flash_thread = threading.Thread(
+        target=_flash_worker,
+        args=(col, delay),
+        daemon=True
+    )
+    flash_thread.start()
+
+def _flash_worker(col, delay):
+    """Worker function that flashes continuously until stopped"""
+    while not flash_stop_event.is_set():
+        pb_change_led(col)
+        time.sleep(delay)
+        if flash_stop_event.is_set():
+            break
+        pb_change_led("OFF")
+        time.sleep(delay)
+
+def pb_flash_threaded_stop():
+    """Stop any active flash immediately"""
+    global flash_thread
+
+    if flash_thread and flash_thread.is_alive():
+        flash_stop_event.set()
+        flash_thread.join(timeout=0.5)
+
+def pb_is_flashing():
+    """Check if LED is currently flashing"""
+    global flash_thread
+    return flash_thread and flash_thread.is_alive()
+
 
 try:
-    print("StanzaCam V1.1")
+    print("----- StanzaCam V1.2 -----")
 
     # Setup GPIO
     GPIO.setmode(GPIO.BCM)
@@ -412,58 +472,77 @@ try:
 
     # -------------------- MAIN --------------------
 
+    print("Running...")
+
     rot_1_old = 0
     rot_2_old = 0
     pb_state_old = 0
     focus_count = 0
     focused = False
+    focused_old = False
+    flash_thread = None
+    flash_stop_event = threading.Event()
+
     while True:
+        # Stuff here will run continuously
+
         # Get latest state of switches
         rot_1 = read_rotary_position(1)
         rot_2 = read_rotary_position(2)
         pb_state = read_pushbutton_state()
 
-        # Stuff here will run continuously
+        # Debounce rotary switches - re-read if either is 0
+        while rot_1 == 0 or rot_2 == 0:
+            time.sleep(0.02)  # 20ms of debounce then re-read states
+            rot_1 = read_rotary_position(1)
+            rot_2 = read_rotary_position(2)
+
+        if rot_2 != rot_2_old:
+            pb_flash_blocking(model_colors.get(rot_2, "OFF"), num=3, delay=0.1)
 
         focused = camera_focus_loop()
+        if not focused:
+            if not pb_is_flashing():
+                pb_flash_threaded_start("RED")
+        else:
+            if pb_is_flashing():
+                pb_flash_threaded_stop()
 
-        # print(f"DEBUG: focused={focused}, focus_count={focus_count}")
+            # If either rotary is switched or focus has just been achieved, set led to prompt color
+            if rot_1 != rot_1_old or rot_2 != rot_2_old or focused != focused_old:
+                pb_change_led(prompt_colors.get(rot_1, "WHITE"))
 
-        # Check switches AFTER updating everything else (e.g. focus)
-        # One of the switches has changed
-        if rot_1 != rot_1_old or rot_2 != rot_2_old or pb_state != pb_state_old:
-            while rot_1 == 0 or rot_2 == 0:  # If rotarys read a 0, loop and re-read
-                time.sleep(0.02)  # 20ms of debounce then re-read states
-                rot_1 = read_rotary_position(1)
-                rot_2 = read_rotary_position(2)
-                pb_state = read_pushbutton_state()
 
-            # Stuff here will only run once on change of any of the switches
+        # Check pushbutton AFTER updating everything else (e.g. focus)
+        if pb_state != pb_state_old:
+            # Stuff here will only run once on pushbutton press
+
+            time.sleep(0.02)  # 20ms of debounce then re-read pushbutton state
+            pb_state = read_pushbutton_state()
 
             # Taking image when properly focused
             if focused and pb_state == 1:
-                print("Taking image...")
-                pb_change_led("YELLOW")
+                print("\nTaking image...")
+                pb_change_led("OFF")
                 take_image()
-                pb_flash_colour("BLUE", num=5, delay=0.2)
-                pb_change_led("WHITE")
+                pb_flash_blocking("BLUE", num=5, delay=0.1)
+                pb_flash_threaded_start("WHITE", delay=0.25)
                 print_requested = wait_for_pushbutton_press()
+                pb_flash_threaded_stop()
                 if print_requested:
                     if printer_comms_test():
-                        pb_change_led("CYAN")  # Cyan = generating poem
-                        print_image_with_poem()
+                        pb_flash_threaded_start("CYAN", delay=0.5)
+                        # print(f"Selected poem style: Position {rot_1}")
+                        print_image_with_poem("test.jpg", rot_1, rot_2)
+                        pb_flash_threaded_stop()
                 focused = False
                 focus_count = 0
 
-            # Taking image when NOT properly focused
-            elif not focused and pb_state == 1:
-                print("Not focused!")
-                pb_flash_colour("RED", num=3, delay=0.2)
-
-        # Store old states of switches for comparison next loop
+        # Store old states for comparison next loop
         rot_1_old = rot_1
         rot_2_old = rot_2
         pb_state_old = pb_state
+        focused_old = focused
 
         # Run 50 times a second
         time.sleep(0.02)
