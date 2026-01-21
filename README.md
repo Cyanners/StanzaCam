@@ -12,9 +12,9 @@ A Raspberry Pi instant camera that captures photos, generates AI poetry using Cl
 
 ## Hardware Requirements
 
-- Raspberry Pi (tested on Pi 4)
-- Raspberry Pi Camera Module 2 (with autofocus)
-- Thermal receipt printer (58mm, serial connection)
+- Raspberry Pi (tested on Pi Zero 2 W)
+- Raspberry Pi Camera Module 3 (with autofocus)
+- Thermal receipt printer (e.g. Tiny, serial connection)
 - RGB LED pushbutton
 - 2x 8-position rotary switches
 - Internet connection (for Claude API)
@@ -82,9 +82,9 @@ Edit `config.py` to customize:
 | Setting | Description | Default |
 |---------|-------------|---------|
 | `ANTHROPIC_API_KEY` | Your Anthropic API key | (required) |
-| `CLAUDE_MODEL` | Claude model for poem generation | `claude-sonnet-4-5-20250929` |
+| `CLAUDE_MODELS` | Claude model for poem generation | `claude-sonnet-4-5-20250929` |
 | `POEM_MAX_TOKENS` | Maximum tokens for poem response | `300` |
-| `POEM_PROMPT` | Custom prompt for poem generation | (see config.py) |
+| `POEM_PROMPTS` | Custom prompt for poem generation | (see config.py) |
 
 ## Usage
 
@@ -101,22 +101,22 @@ python3 Stanza_Main.py
 
 | Color | Meaning |
 |-------|---------|
-| Magenta | Starting up |
-| Green | Camera focused, ready to capture |
-| Red | Camera not focused |
-| Yellow | Taking photo |
-| Blue (flashing) | Photo captured |
-| White | Waiting for print confirmation |
-| Cyan | Generating poem with Claude AI |
+| Solid Magenta | Starting up |
+| Solid Any | Camera focused, prompt chosen, ready to capture |
+| Blinking Red | Camera not focused |
+| Flashing Blue | Photo captured |
+| Blinking White | Waiting for print confirmation |
+| Blinking Cyan | Generating poem with Claude AI |
 
 ### Taking a Photo
 
-1. Wait for the LED to turn **green** (camera focused)
-2. Press the pushbutton to capture
-3. LED flashes **blue** to confirm capture
-4. LED turns **white** - press again within 3 seconds to print
-5. LED turns **cyan** while generating poem
-6. Photo and poem print automatically
+1. Choose your prompt with rotary switch 1 and Claude model with switch 2
+2. Wait for the LED be a solid color (camera focused)
+3. Press the pushbutton to capture
+4. LED flashes **blue** to confirm capture
+5. LED blinks **white** - press again within 3 seconds to print
+6. LED blinks **cyan** while generating poem
+7. Photo and poem print automatically
 
 ## Troubleshooting
 
