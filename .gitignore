@@ -1,0 +1,26 @@
+# API key configuration - DO NOT COMMIT WITH REAL KEYS
+config.py
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+
+# Temporary image files
+test.jpg
+temp.jpg
+capture_*.jpg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

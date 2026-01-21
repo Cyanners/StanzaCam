@@ -1,13 +1,24 @@
-# StanzaCam V1.0
+# StanzaCam V1.1 - Now with Claude AI Poetry!
 
 import time
 import RPi.GPIO as GPIO
 import os
+import base64
 os.environ["LIBCAMERA_LOG_LEVELS"] = "ERROR"  # Only show errors, not INFO
 from picamera2 import Picamera2
 from escpos.printer import Serial
 from PIL import Image
-from io import BytesIO
+import anthropic
+
+# Import configuration
+try:
+    from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, POEM_MAX_TOKENS, POEM_PROMPT
+except ImportError:
+    print("ERROR: config.py not found! Copy config.py and add your API key.")
+    ANTHROPIC_API_KEY = None
+    CLAUDE_MODEL = "claude-sonnet-4-5-20250929"
+    POEM_MAX_TOKENS = 300
+    POEM_PROMPT = "Write a short poem about this image."
 
 # GPIO Pin Aliases
 PB_Red = 19
@@ -69,10 +80,139 @@ def print_image():
     new_height = int(new_width * aspect_ratio)
     img = img.resize((new_width, new_height), Image.LANCZOS)
 
-    printer.text("IMAGE NAME HERE\n")
+    printer.text("\n")
     # printer.image(img, center=True)  # Raster method, can cause stretching and weird buffer issues
     printer.image(img, center=True, impl="bitImageColumn")  # Column method, fixes stretching and buffer issues but has lines along image width
     printer.text("\n\n")
+
+
+def generate_poem_from_image(image_path):
+    """Send image to Claude API and get a poem back"""
+    if not ANTHROPIC_API_KEY or ANTHROPIC_API_KEY == "your-api-key-here":
+        print("ERROR: Valid API key not configured in config.py")
+        return None
+
+    try:
+        # Read and encode image as base64
+        with open(image_path, "rb") as image_file:
+            image_data = base64.standard_b64encode(image_file.read()).decode("utf-8")
+
+        # Determine media type
+        if image_path.lower().endswith(".png"):
+            media_type = "image/png"
+        else:
+            media_type = "image/jpeg"
+
+        # Create Anthropic client
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+        # Send image to Claude with poem prompt
+        print("Sending image to Claude for poem generation...")
+        message = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=POEM_MAX_TOKENS,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": media_type,
+                                "data": image_data,
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": POEM_PROMPT
+                        }
+                    ],
+                }
+            ],
+        )
+
+        # Extract poem text from response (with safety check)
+        if message.content and hasattr(message.content[0], 'text'):
+            poem = message.content[0].text
+            print("Poem generated successfully!")
+            print("-" * 32)
+            print(poem)
+            print("-" * 32)
+            return poem
+        else:
+            print("ERROR: Unexpected response format from Claude")
+            return None
+
+    except anthropic.APIConnectionError:
+        print("ERROR: Could not connect to Claude API. Check internet connection.")
+        return None
+    except anthropic.AuthenticationError:
+        print("ERROR: Invalid API key. Check config.py")
+        return None
+    except anthropic.RateLimitError:
+        print("ERROR: API rate limit exceeded. Wait and try again.")
+        return None
+    except anthropic.APIStatusError as e:
+        print(f"ERROR: API error {e.status_code} - {e.message}")
+        return None
+    except Exception as e:
+        print(f"ERROR: Failed to generate poem - {e}")
+        return None
+
+
+def print_poem(poem_text):
+    """Print poem text on thermal printer"""
+    if not poem_text:
+        return False
+
+    try:
+        printer.text("\n")
+        printer.set(align='center')
+
+        # Print each line of the poem
+        for line in poem_text.strip().split('\n'):
+            # Wrap long lines to fit 32 char width
+            while len(line) > 32:
+                # Find last space before 32 chars
+                wrap_point = line[:32].rfind(' ')
+                if wrap_point == -1:
+                    wrap_point = 32
+                printer.text(line[:wrap_point] + "\n")
+                line = line[wrap_point:].strip()
+            printer.text(line + "\n")
+
+        printer.text("\n")
+        printer.set(align='left')  # Reset alignment
+        printer.text("~ StanzaCam + Claude AI ~\n")
+        printer.text("\n\n\n")  # Feed paper
+        print("Poem printed successfully!")
+        return True
+
+    except Exception as e:
+        print(f"ERROR: Failed to print poem - {e}")
+        return False
+
+
+def print_image_with_poem():
+    """Print the captured image followed by a Claude-generated poem"""
+    # Print the image first
+    img = Image.open("test.jpg")
+    aspect_ratio = img.height / img.width
+    new_width = 384
+    new_height = int(new_width * aspect_ratio)
+    img = img.resize((new_width, new_height), Image.LANCZOS)
+
+    printer.text("\n")
+    printer.image(img, center=True, impl="bitImageColumn")
+    printer.text("\n")
+
+    # Generate and print poem
+    poem = generate_poem_from_image("test.jpg")
+    if poem:
+        print_poem(poem)
+    else:
+        printer.text("\n[Poem generation failed]\n\n\n")
 
 def is_focused():
     """Check if camera is currently focused"""
@@ -209,7 +349,7 @@ def pb_flash_colour(col, num=3, delay=0.25):
 
 
 try:
-    print("StanzaCam V1.0")
+    print("StanzaCam V1.1")
 
     # Setup GPIO
     GPIO.setmode(GPIO.BCM)
@@ -310,7 +450,8 @@ try:
                 print_requested = wait_for_pushbutton_press()
                 if print_requested:
                     if printer_comms_test():
-                        print_image()
+                        pb_change_led("CYAN")  # Cyan = generating poem
+                        print_image_with_poem()
                 focused = False
                 focus_count = 0
 
