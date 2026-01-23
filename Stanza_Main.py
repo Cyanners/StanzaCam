@@ -1,4 +1,4 @@
-# StanzaCam V1.2 - 21/01/26
+# StanzaCam V1.21 - 23/01/26
 
 import time
 import RPi.GPIO as GPIO
@@ -107,8 +107,9 @@ def print_image():
 def generate_poem_from_image(image_path, prompt_text, model):
     """Send image to Claude API and get a poem back"""
     if not ANTHROPIC_API_KEY or ANTHROPIC_API_KEY == "your-api-key-here":
-        print("ERROR: Valid API key not configured in config.py")
-        return None
+        error_msg = "Invalid API key in config.py"
+        print(f"ERROR: {error_msg}")
+        return None, error_msg
 
     try:
         # Read and encode image as base64
@@ -159,26 +160,32 @@ def generate_poem_from_image(image_path, prompt_text, model):
             print("-" * 32)
             print(poem)
             print("-" * 32)
-            return poem
+            return poem, None
         else:
-            print("ERROR: Unexpected response format from Claude")
-            return None
+            error_msg = "Unexpected response format"
+            print(f"ERROR: {error_msg}")
+            return None, error_msg
 
     except anthropic.APIConnectionError:
-        print("ERROR: Could not connect to Claude API. Check internet connection.")
-        return None
+        error_msg = "No internet connection"
+        print(f"ERROR: {error_msg}")
+        return None, error_msg
     except anthropic.AuthenticationError:
-        print("ERROR: Invalid API key. Check config.py")
-        return None
+        error_msg = "Invalid API key"
+        print(f"ERROR: {error_msg}")
+        return None, error_msg
     except anthropic.RateLimitError:
-        print("ERROR: API rate limit exceeded. Wait and try again.")
-        return None
+        error_msg = "Rate limit exceeded"
+        print(f"ERROR: {error_msg}")
+        return None, error_msg
     except anthropic.APIStatusError as e:
-        print(f"ERROR: API error {e.status_code} - {e.message}")
-        return None
+        error_msg = f"API error {e.status_code}"
+        print(f"ERROR: {error_msg}")
+        return None, error_msg
     except Exception as e:
-        print(f"ERROR: Failed to generate poem - {e}")
-        return None
+        error_msg = f"Unknown error: {str(e)[:50]}"
+        print(f"ERROR: {error_msg}")
+        return None, error_msg
 
 def print_poem(poem_text):
     """Print poem text on thermal printer"""
@@ -227,11 +234,29 @@ def print_image_with_poem(image_path, rot_1_pos, rot_2_pos):
     selected_model = CLAUDE_MODELS.get(rot_2_pos, CLAUDE_MODELS[1])
 
     # Generate and print poem with selected prompt
-    poem = generate_poem_from_image("test.jpg", selected_prompt, selected_model)
+    poem, error = generate_poem_from_image("test.jpg", selected_prompt, selected_model)
     if poem:
         print_poem(poem)
     else:
-        printer.text("\n[Poem generation failed]\n\n\n")
+        # Print the actual error message
+        printer.text("\nPoem generation failed\n")
+        if error:
+            # Wrap error message to fit printer width
+            error_lines = []
+            words = error.split()
+            current_line = ""
+            for word in words:
+                if len(current_line + word) <= 32:
+                    current_line += word + " "
+                else:
+                    error_lines.append(current_line.strip())
+                    current_line = word + " "
+            if current_line:
+                error_lines.append(current_line.strip())
+
+            for line in error_lines:
+                printer.text(line + "\n")
+        printer.text("\n\n")
 
 def is_focused():
     """Check if camera is currently focused"""
